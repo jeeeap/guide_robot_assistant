@@ -1,0 +1,36 @@
+locations:
+  entrance:
+    name: 门口
+    x: 0.0
+    y: 0.0
+    yaw: 0.0
+
+  room_302:
+    name: 302房间
+    x: 2.0
+    y: 1.5
+    yaw: 0.0
+
+  room_327:
+    name: 327房间
+    x: -1.5
+    y: 2.2
+    yaw: 1.57
+
+  service_desk:
+    name: 服务台
+    x: 1.0
+    y: -1.2
+    yaw: 3.14
+
+  living_room:
+    name: 客厅
+    x: 3.0
+    y: 0.0
+    yaw: 0.0
+
+  kitchen:
+    name: 厨房
+    x: -2.0
+    y: -1.5
+    yaw: -1.57

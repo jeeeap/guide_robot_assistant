@@ -1,0 +1,26 @@
+# 创建 .gitignore
+cat > .gitignore << 'EOF'
+# ROS2 编译产物
+build/
+install/
+log/
+ 
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+ 
+# 编辑器文件
+.vscode/
+.idea/
+*.swp
+*.swo
+ 
+# 操作系统文件
+.DS_Store
+Thumbs.db
+ 
+# 其他
+*.log
+*.bak
+EOF
