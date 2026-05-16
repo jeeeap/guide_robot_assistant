@@ -19,9 +19,11 @@ class NavClientNode(Node):
         self.declare_parameter('locations_file', '')
         self.declare_parameter('goal_frame_id', 'map')
         self.declare_parameter('action_name', 'navigate_to_pose')
+        self.declare_parameter('nav2_wait_timeout_sec', 15.0)
 
         self.goal_frame_id = self.get_parameter('goal_frame_id').value
         action_name = self.get_parameter('action_name').value
+        self.nav2_wait_timeout_sec = float(self.get_parameter('nav2_wait_timeout_sec').value)
         self.locations = self.load_locations()
         self.action_client = ActionClient(self, NavigateToPose, action_name)
         self.status_publisher = self.create_publisher(String, '/navigation_status', 10)
@@ -101,8 +103,21 @@ class NavClientNode(Node):
 
         self.current_goal = target
         self.publish_status('waiting_for_nav2', target=target)
-        self.get_logger().info('正在等待 Nav2 NavigateToPose action 服务...')
-        self.action_client.wait_for_server()
+        self.get_logger().info(
+            f'正在等待 Nav2 NavigateToPose action 服务，最多等待 {self.nav2_wait_timeout_sec:.1f} 秒...'
+        )
+        if not self.action_client.wait_for_server(timeout_sec=self.nav2_wait_timeout_sec):
+            self.goal_queue.insert(0, target)
+            self.current_goal = None
+            text = (
+                'Nav2 NavigateToPose action 服务不可用。'
+                '请确认 tb3_simulation_launch.py 已正常启动、机器人已生成、'
+                '并且 /tf 中存在 map、odom、base_link 坐标变换。'
+            )
+            self.get_logger().error(text)
+            self.publish_status('nav2_unavailable', target=target, error=text)
+            self.publish_tts('导航系统还没有准备好，请先检查仿真和导航服务。')
+            return
 
         self.publish_status('goal_sent', target=target, pose=location)
         self.publish_tts(f'开始导航到{location.get("name", target)}。')

@@ -33,6 +33,7 @@ def generate_launch_description():
                 'locations_file': locations_file,
                 'goal_frame_id': 'map',
                 'action_name': 'navigate_to_pose',
+                'nav2_wait_timeout_sec': 15.0,
             }],
         ),
         Node(
