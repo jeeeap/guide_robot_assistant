@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
+        ('share/' + package_name + '/config', glob('config/*.rviz')),
     ],
     install_requires=['setuptools', 'PyYAML'],
     zip_safe=True,
@@ -28,6 +29,7 @@ setup(
     entry_points={
         'console_scripts': [
             'text_command_node = guide_robot_assistant.text_command_node:main',
+            'asr_node = guide_robot_assistant.asr_node:main',
             'center_node = guide_robot_assistant.center_node:main',
             'nav_client_node = guide_robot_assistant.nav_client_node:main',
             'tts_node = guide_robot_assistant.tts_node:main',
