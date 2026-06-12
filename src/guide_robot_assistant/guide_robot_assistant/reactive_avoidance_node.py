@@ -31,7 +31,9 @@ class ReactiveAvoidanceNode(Node):
         self.declare_parameter('control_rate', 10.0)
         # TTS
         self.declare_parameter('tts_cooldown_sec', 3.0)    # 同一消息最小间隔
+        self.declare_parameter('persistent_warning_sec', 6.0)
         self.declare_parameter('enabled', True)
+        self.declare_parameter('publish_cmd_vel', True)
 
         scan_topic = self.get_parameter('scan_topic').value
         cmd_vel_topic = self.get_parameter('cmd_vel_topic').value
@@ -48,6 +50,10 @@ class ReactiveAvoidanceNode(Node):
         self.current_state = 'clear'
         self._last_tts_time: float = 0.0
         self._last_tts_text: str = ''
+        self._last_hazard_key: str = ''
+        self.hazard_direction = 'clear'
+        self.hazard_level = 'clear'
+        self.guidance_advice = '前方通畅，继续前进'
 
         self.create_subscription(LaserScan, scan_topic, self.handle_scan, 10)
         self.cmd_pub = self.create_publisher(Twist, cmd_vel_topic, 10)
@@ -109,35 +115,85 @@ class ReactiveAvoidanceNode(Node):
         if self.avoidance_active and not was_active:
             self.trigger_count += 1
 
-        self._handle_tts(prev_state, side_warn_dist)
-        self.cmd_pub.publish(cmd)
+        self._update_guidance(side_warn_dist)
+        self._handle_tts(prev_state)
+        if bool(self.get_parameter('publish_cmd_vel').value):
+            self.cmd_pub.publish(cmd)
         self.publish_status(cmd)
 
-    def _handle_tts(self, prev_state: str, side_warn_dist: float):
+    def _update_guidance(self, side_warn_dist: float):
+        warning_dist = float(self.get_parameter('warning_distance').value)
+        safe_dist = float(self.get_parameter('safe_distance').value)
+        critical_dist = float(self.get_parameter('critical_distance').value)
+
+        self.hazard_direction = 'clear'
+        self.hazard_level = 'clear'
+        self.guidance_advice = '前方通畅，继续前进'
+
+        if self.min_front_distance < critical_dist:
+            self.hazard_direction = self.front_direction_label()
+            self.hazard_level = 'critical'
+            self.guidance_advice = f'{self.hazard_direction}距离过近，请立即停下，等待机器人避让'
+        elif self.min_front_distance < safe_dist:
+            self.hazard_direction = self.front_direction_label()
+            self.hazard_level = 'avoid'
+            turn_text = '左侧' if self.min_left_distance >= self.min_right_distance else '右侧'
+            self.guidance_advice = f'{self.hazard_direction}有障碍，{turn_text}空间较大，正在绕行'
+        elif self.min_front_distance < warning_dist:
+            self.hazard_direction = self.front_direction_label()
+            self.hazard_level = 'warning'
+            self.guidance_advice = f'{self.hazard_direction}有障碍，请放慢脚步'
+        else:
+            left_blocked = self.min_left_distance < side_warn_dist
+            right_blocked = self.min_right_distance < side_warn_dist
+            if left_blocked and right_blocked:
+                self.hazard_direction = '左右两侧'
+                self.hazard_level = 'side_warning'
+                self.guidance_advice = '两侧距离较近，请保持在通道中央'
+            elif left_blocked:
+                self.hazard_direction = '左侧'
+                self.hazard_level = 'side_warning'
+                self.guidance_advice = '左侧有障碍，请稍微靠右'
+            elif right_blocked:
+                self.hazard_direction = '右侧'
+                self.hazard_level = 'side_warning'
+                self.guidance_advice = '右侧有障碍，请稍微靠左'
+
+    def _handle_tts(self, prev_state: str):
         message = ''
+        hazard_key = f'{self.hazard_level}:{self.hazard_direction}'
+        should_repeat = (
+            self.hazard_level != 'clear'
+            and hazard_key == self._last_hazard_key
+            and time.time() - self._last_tts_time >= float(self.get_parameter('persistent_warning_sec').value)
+        )
 
         if self.current_state != prev_state:
             if self.current_state == 'critical_turn':
-                message = '紧急避障，请注意安全！'
+                dist_m = round(self.min_front_distance, 2)
+                message = f'危险，{self.hazard_direction}约{dist_m}米有障碍，请立即停下。'
             elif self.current_state == 'avoidance_turn':
+                dist_m = round(self.min_front_distance, 2)
                 if self.min_left_distance >= self.min_right_distance:
-                    message = '前方有障碍，正在向左避让，请稍候。'
+                    message = f'{self.hazard_direction}约{dist_m}米有障碍，左侧空间较大，正在向左绕行。'
                 else:
-                    message = '前方有障碍，正在向右避让，请稍候。'
+                    message = f'{self.hazard_direction}约{dist_m}米有障碍，右侧空间较大，正在向右绕行。'
             elif self.current_state == 'warning':
                 dist_m = round(self.min_front_distance, 1)
-                message = f'注意，前方约{dist_m}米处有障碍物，已减速。'
+                message = f'注意，{self.hazard_direction}约{dist_m}米处有障碍物，请放慢脚步。'
             elif self.current_state == 'clear' and prev_state != 'clear':
                 message = '前方已清空，继续前进。'
+        elif should_repeat:
+            dist = self.primary_hazard_distance()
+            if dist is not None:
+                message = f'持续提醒，{self.hazard_direction}约{round(dist, 1)}米有障碍，{self.guidance_advice}。'
 
         # 侧方障碍独立预警（仅在 clear 状态下避免与前方预警叠加）
         if not message and self.current_state == 'clear':
-            left_blocked = self.min_left_distance < side_warn_dist
-            right_blocked = self.min_right_distance < side_warn_dist
-            if left_blocked and not right_blocked:
-                message = '左侧有障碍物，请小心。'
-            elif right_blocked and not left_blocked:
-                message = '右侧有障碍物，请小心。'
+            if self.hazard_level == 'side_warning':
+                dist = self.primary_hazard_distance()
+                if dist is not None:
+                    message = f'{self.hazard_direction}约{round(dist, 1)}米有障碍，{self.guidance_advice}。'
 
         if not message:
             return
@@ -153,7 +209,27 @@ class ReactiveAvoidanceNode(Node):
         self.tts_pub.publish(tts_msg)
         self._last_tts_time = now
         self._last_tts_text = message
+        self._last_hazard_key = hazard_key
         self.get_logger().info(f'[避障TTS] {message}')
+
+    def front_direction_label(self) -> str:
+        if self.min_left_distance + 0.15 < self.min_right_distance:
+            return '左前方'
+        if self.min_right_distance + 0.15 < self.min_left_distance:
+            return '右前方'
+        return '正前方'
+
+    def primary_hazard_distance(self) -> Optional[float]:
+        if self.hazard_level in ['critical', 'avoid', 'warning']:
+            return self.min_front_distance if math.isfinite(self.min_front_distance) else None
+        if self.hazard_direction == '左侧':
+            return self.min_left_distance if math.isfinite(self.min_left_distance) else None
+        if self.hazard_direction == '右侧':
+            return self.min_right_distance if math.isfinite(self.min_right_distance) else None
+        if self.hazard_direction == '左右两侧':
+            values = [v for v in [self.min_left_distance, self.min_right_distance] if math.isfinite(v)]
+            return min(values) if values else None
+        return None
 
     def choose_turn_direction(self, turn_speed: float) -> float:
         if self.min_left_distance >= self.min_right_distance:
@@ -187,6 +263,9 @@ class ReactiveAvoidanceNode(Node):
             'min_front_distance': self.safe_float(self.min_front_distance),
             'min_left_distance': self.safe_float(self.min_left_distance),
             'min_right_distance': self.safe_float(self.min_right_distance),
+            'hazard_level': self.hazard_level,
+            'hazard_direction': self.hazard_direction,
+            'guidance_advice': self.guidance_advice,
             'linear_x': round(float(cmd.linear.x), 4),
             'angular_z': round(float(cmd.angular.z), 4),
             'elapsed_time': round(time.time() - self.start_time, 3),
@@ -208,7 +287,8 @@ def main(args=None):
         pass
     finally:
         stop = Twist()
-        node.cmd_pub.publish(stop)
+        if bool(node.get_parameter('publish_cmd_vel').value):
+            node.cmd_pub.publish(stop)
         node.destroy_node()
         rclpy.shutdown()
 

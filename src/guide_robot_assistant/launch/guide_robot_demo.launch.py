@@ -16,11 +16,15 @@ def generate_launch_description():
     use_llm_arg = DeclareLaunchArgument('use_llm', default_value='false')
     use_mic_arg = DeclareLaunchArgument('use_microphone', default_value='false')
     use_espeak_arg = DeclareLaunchArgument('use_espeak', default_value='true')
+    use_sim_time_arg = DeclareLaunchArgument('use_sim_time', default_value='true')
+    locations_file_arg = DeclareLaunchArgument('locations_file', default_value=locations_file)
 
     return LaunchDescription([
         use_llm_arg,
         use_mic_arg,
         use_espeak_arg,
+        use_sim_time_arg,
+        locations_file_arg,
 
         # ── 语义解析核心（Agentic版，含对话记忆）──────────────────────────
         Node(
@@ -34,6 +38,7 @@ def generate_launch_description():
                 'llm_api_key_env': 'ZHIPUAI_API_KEY',
                 'llm_timeout': 8.0,
                 'enable_memory': True,
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
             }],
         ),
 
@@ -44,10 +49,11 @@ def generate_launch_description():
             name='nav_client_node',
             output='screen',
             parameters=[{
-                'locations_file': locations_file,
+                'locations_file': LaunchConfiguration('locations_file'),
                 'goal_frame_id': 'map',
                 'action_name': 'navigate_to_pose',
                 'nav2_wait_timeout_sec': 15.0,
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
             }],
         ),
 
@@ -63,6 +69,7 @@ def generate_launch_description():
                 'espeak_voice': 'zh',
                 'espeak_speed': 145,
                 'espeak_amplitude': 100,
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
             }],
         ),
 
@@ -79,6 +86,7 @@ def generate_launch_description():
                 'recognition_timeout_sec': 5.0,
                 'phrase_time_limit_sec': 8.0,
                 'max_retries': 2,
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
             }],
         ),
 
@@ -90,6 +98,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'scenario_name': 'text_navigation_demo',
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
             }],
         ),
     ])

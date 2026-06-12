@@ -39,18 +39,34 @@ class CenterNode(Node):
             'entrance': ['门口', '入口', '大门', 'entrance'],
             'room_302': ['302', '302房间', '三零二', 'room302', 'room_302'],
             'room_327': ['327', '327房间', '三二七', 'room327', 'room_327'],
-            'service_desk': ['服务台', '前台', '咨询台', '桌子', 'desk', 'service_desk'],
-            'living_room': ['客厅', '大厅', 'living_room'],
-            'kitchen': ['厨房', 'kitchen'],
+            'service_desk': ['服务台', '前台', '咨询台', 'service_desk'],
+            'living_room': ['客厅', '大厅', '沙发', '客厅沙发', 'living_room', 'sofa'],
+            'kitchen': ['厨房', '厨', 'kitchen'],
+            'bedroom': ['卧室', '房间', '床', 'bedroom', 'bed'],
+            'dining_room': ['餐厅', '饭厅', '餐桌', 'dining_room'],
+            'study': ['书房', '学习区', 'study'],
+            'desk': ['书桌', '桌子', 'desk'],
         }
         self.cancel_words = ['停止', '取消', '别去了', '暂停', '取消导航', 'stop', 'cancel', '算了', '不去了']
         self.again_words = ['再去一次', '再去', '还去', '重新去', '再来一次', '再导航']
         self.back_words = ['回去', '回来', '回到起点', '回门口', '回到门口', '回到入口', '回出发点']
         self.where_words = ['我在哪', '现在在哪', '到了吗', '到哪了', '在哪里', '位置']
+        self.last_target_words = ['刚才那里', '刚刚那里', '上次那里', '刚才的地方', '上一个地方', '同一个地方']
+        self.semantic_routes: List[Tuple[str, List[str], str]] = [
+            ('kitchen', ['做饭', '煮饭', '烧饭', '炒菜', '拿吃的', '喝水', '倒水', '找冰箱'], '你提到做饭或取用食物，我判断目的地是厨房'),
+            ('dining_room', ['吃饭', '用餐', '吃东西', '餐桌', '吃早餐', '吃午饭', '吃晚饭'], '你提到用餐，我判断目的地是餐厅'),
+            ('living_room', ['休息一下', '坐一会', '看电视', '去沙发', '客厅休息', '放松一下'], '你提到休息或看电视，我判断目的地是客厅沙发'),
+            ('bedroom', ['睡觉', '躺一会', '回房间', '去床边', '卧室休息'], '你提到睡觉或躺下，我判断目的地是卧室'),
+            ('desk', ['学习', '看书', '写作业', '办公', '工作', '用电脑', '书桌'], '你提到学习或办公，我判断目的地是书桌'),
+            ('entrance', ['出门', '离开房子', '去门口', '到入口'], '你提到出门或离开，我判断目的地是门口'),
+        ]
 
         # Agent 记忆：位置历史 + 对话历史
         self.last_visited: Deque[str] = deque(maxlen=10)
+        self.last_requested: Deque[str] = deque(maxlen=10)
         self.current_location: Optional[str] = None
+        self.current_destination: Optional[str] = None
+        self.last_reason: str = ''
         self.conversation_history: List[Dict] = []  # LLM message pairs
 
         self.get_logger().info('中心调度节点（Agentic版）已启动，等待 /raw_text 指令。')
@@ -68,10 +84,13 @@ class CenterNode(Node):
         if state == 'result' and payload.get('action_status') in [4, '4'] and target:
             self.last_visited.appendleft(target)
             self.current_location = target
+            self.current_destination = None
             self._publish_memory()
             self.get_logger().info(f'[记忆] 已到达 {target}，位置记忆已更新。')
         elif state == 'goal_sent' and target:
             self.current_location = f'前往{self.display_name(target)}'
+            self.current_destination = target
+            self.last_requested.appendleft(target)
             self._publish_memory()
 
     # ── 主处理逻辑 ─────────────────────────────────────────────────────────
@@ -101,7 +120,10 @@ class CenterNode(Node):
             'llm_error': meta['llm_error'],
             'memory': {
                 'current_location': self.current_location,
+                'current_destination': self.current_destination,
+                'last_requested': list(self.last_requested)[:3],
                 'last_visited': list(self.last_visited)[:3],
+                'last_reason': self.last_reason,
                 'history_turns': len(self.conversation_history) // 2,
             },
         })
@@ -245,10 +267,15 @@ class CenterNode(Node):
         if bool(self.get_parameter('enable_memory').value):
             # "再去一次" → 重复上一个目标
             if any(w in normalized for w in self.again_words):
-                if self.last_visited:
+                target = None
+                if self.last_requested:
+                    target = list(self.last_requested)[0]
+                elif self.last_visited:
                     target = list(self.last_visited)[0]
+                if target:
+                    reason = f'你要求重复上一处目的地，我根据记忆选择{self.display_name(target)}'
                     return self._cmd('navigate', [target], text,
-                                     f'好的，再次带您前往{self.display_name(target)}。')
+                                     f'{reason}，现在再次规划路线。', reason=reason)
                 return self._cmd('unknown', [], text, '抱歉，我还没有到达过任何地点，请告诉我您想去哪里。')
 
             # "回去" → 返回门口（起点）
@@ -268,11 +295,34 @@ class CenterNode(Node):
 
         targets = self.extract_targets(normalized)
         if not targets:
+            if bool(self.get_parameter('enable_memory').value):
+                memory_target = self.resolve_memory_reference(normalized)
+                if memory_target:
+                    reason = f'你提到刚才或上次的位置，我根据记忆选择{self.display_name(memory_target)}'
+                    return self._cmd(
+                        'navigate',
+                        [memory_target],
+                        text,
+                        f'{reason}，现在开始规划路线。',
+                        reason=reason,
+                    )
+
+            semantic_target, reason = self.infer_semantic_target(normalized)
+            if semantic_target:
+                return self._cmd(
+                    'navigate',
+                    [semantic_target],
+                    text,
+                    f'{reason}，现在开始规划路线。',
+                    reason=reason,
+                )
+
             return self._cmd('unknown', [], text,
-                             '抱歉，我没有识别出您想去的位置。请说例如：带我去302房间。')
+                             '抱歉，我没有识别出您想去的位置。可以说“去厨房”，也可以说“我想做饭”或“我想休息一下”。')
 
         intent = 'navigate' if len(targets) == 1 else 'multi_navigate'
-        return self._cmd(intent, targets, text, self.default_reply(intent, targets))
+        reason = '识别到明确地点：' + '、'.join(self.display_name(t) for t in targets)
+        return self._cmd(intent, targets, text, self.default_reply(intent, targets), reason=reason)
 
     def extract_targets(self, text: str) -> List[str]:
         found = []
@@ -287,9 +337,43 @@ class CenterNode(Node):
 
         return found
 
+    def resolve_memory_reference(self, text: str) -> Optional[str]:
+        if not any(word in text for word in self.last_target_words):
+            return None
+        if self.current_destination and self.current_destination in self.location_aliases:
+            return self.current_destination
+        if self.last_requested:
+            return list(self.last_requested)[0]
+        if self.last_visited:
+            return list(self.last_visited)[0]
+        return None
+
+    def infer_semantic_target(self, text: str) -> Tuple[Optional[str], str]:
+        for target, keywords, reason in self.semantic_routes:
+            if any(keyword in text for keyword in keywords):
+                return target, reason
+        return None, ''
+
     # ── 辅助方法 ────────────────────────────────────────────────────────────
-    def _cmd(self, intent: str, targets: List[str], raw_text: str, reply: str) -> Dict:
-        return {'intent': intent, 'targets': targets, 'raw_text': raw_text, 'reply': reply}
+    def _cmd(
+        self,
+        intent: str,
+        targets: List[str],
+        raw_text: str,
+        reply: str,
+        reason: str = '',
+    ) -> Dict:
+        if targets:
+            for target in targets:
+                self.last_requested.appendleft(target)
+        self.last_reason = reason
+        return {
+            'intent': intent,
+            'targets': targets,
+            'raw_text': raw_text,
+            'reply': reply,
+            'reason': reason,
+        }
 
     def default_reply(self, intent: str, targets: List[str]) -> str:
         if intent == 'cancel_navigation':
@@ -312,8 +396,12 @@ class CenterNode(Node):
             'room_302': '302房间',
             'room_327': '327房间',
             'service_desk': '服务台',
-            'living_room': '客厅',
+            'living_room': '客厅沙发',
             'kitchen': '厨房',
+            'bedroom': '卧室',
+            'dining_room': '餐厅',
+            'study': '书房',
+            'desk': '书桌',
         }
         return display_names.get(target, target)
 
@@ -325,7 +413,10 @@ class CenterNode(Node):
     def _publish_memory(self):
         self.publish_json(self.memory_publisher, {
             'current_location': self.current_location,
+            'current_destination': self.current_destination,
+            'last_requested': list(self.last_requested),
             'last_visited': list(self.last_visited),
+            'last_reason': self.last_reason,
             'history_turns': len(self.conversation_history) // 2,
         })
 

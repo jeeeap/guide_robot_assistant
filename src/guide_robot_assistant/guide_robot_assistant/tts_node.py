@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 import threading
 
@@ -34,16 +35,11 @@ class TtsNode(Node):
         self.get_logger().info(f'TTS节点已启动 [{mode}]，订阅 /tts_text。')
 
     def _check_espeak(self) -> bool:
-        try:
-            result = subprocess.run(
-                ['espeak-ng', '--version'],
-                capture_output=True, timeout=3
-            )
-            if result.returncode == 0:
-                self.get_logger().info('espeak-ng 可用，将进行真实语音播报。')
-                return True
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+        # 用 shutil.which 检测二进制是否存在，避免 subprocess 在 WSL2 无音频设备时阻塞
+        path = shutil.which('espeak-ng')
+        if path:
+            self.get_logger().info(f'espeak-ng 可用: {path}，将进行语音播报。')
+            return True
         self.get_logger().warning(
             'espeak-ng 不可用，仅控制台输出。\n'
             '安装命令: sudo apt install espeak-ng espeak-ng-data-zh'

@@ -1,0 +1,48 @@
+locations:
+  entrance:
+    name: 门口
+    x: 0.0
+    y: 0.0
+    yaw: 0.0
+
+  living_room:
+    name: 沙发
+    x: 0.336492
+    y: -1.760747
+    yaw: 0.0
+
+  kitchen:
+    name: 厨房
+    x: 8.418441
+    y: -3.376843
+    yaw: 0.0
+
+  bedroom:
+    name: 卧室
+    x: -4.811442
+    y: 1.789502
+    yaw: 0.0
+
+  dining_room:
+    name: 餐厅
+    x: 5.289403
+    y: 1.399966
+    yaw: 0.0
+
+  study:
+    name: 书房
+    x: -7.944181
+    y: -3.683770
+    yaw: 0.0
+
+  desk:
+    name: 书桌
+    x: -7.944181
+    y: -3.683770
+    yaw: 0.0
+
+  service_desk:
+    name: 服务台
+    x: 0.336492
+    y: -1.760747
+    yaw: 0.0
